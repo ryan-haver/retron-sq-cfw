@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# S22mountroms - Mount the ROMs partition for RetroSQ Enhanced CFW
+#
+# This script runs after S21mountall to mount the FAT32 ROMs partition
+# at /mnt/roms. This partition is created by S20firstboot on first boot.
+#
+
+ROMS_MOUNT="/mnt/roms"
+SDCARD="/dev/mmcblk0"
+
+find_roms_partition() {
+    # Look for a FAT32 partition labeled RETROSQ
+    for part in ${SDCARD}p*; do
+        if [ -b "$part" ]; then
+            LABEL=$(blkid -s LABEL -o value "$part" 2>/dev/null)
+            if [ "$LABEL" = "RETROSQ" ]; then
+                echo "$part"
+                return
+            fi
+            
+            # Also check for FAT32 partitions after p5
+            PART_NUM=$(echo "$part" | sed 's/.*p//')
+            if [ "$PART_NUM" -gt 5 ] 2>/dev/null; then
+                FSTYPE=$(blkid -s TYPE -o value "$part" 2>/dev/null)
+                if [ "$FSTYPE" = "vfat" ]; then
+                    echo "$part"
+                    return
+                fi
+            fi
+        fi
+    done
+}
+
+case "$1" in
+  start)
+    echo "Mounting ROMs partition..."
+    
+    ROMS_PARTITION=$(find_roms_partition)
+    
+    if [ -n "$ROMS_PARTITION" ] && [ -b "$ROMS_PARTITION" ]; then
+        mkdir -p $ROMS_MOUNT
+        
+        # Mount with options optimized for SD card
+        mount -t vfat -o rw,noatime,fmask=0022,dmask=0022,utf8,flush $ROMS_PARTITION $ROMS_MOUNT
+        
+        if [ $? -eq 0 ]; then
+            echo "ROMs partition mounted at $ROMS_MOUNT"
+            
+            # Create symlink in userdata for easy access
+            if [ ! -L /userdata/roms ]; then
+                ln -sf $ROMS_MOUNT /userdata/roms 2>/dev/null || true
+            fi
+        else
+            echo "Failed to mount ROMs partition"
+        fi
+    else
+        echo "No ROMs partition found (this is normal on stock firmware)"
+    fi
+    ;;
+  stop)
+    echo "Unmounting ROMs partition..."
+    
+    # Sync before unmount
+    sync
+    
+    if mountpoint -q $ROMS_MOUNT; then
+        umount $ROMS_MOUNT
+        echo "ROMs partition unmounted"
+    fi
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+esac
+
+exit 0

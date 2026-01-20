@@ -131,48 +131,84 @@ mkdir -p $ROMS_MOUNT
 log "Creating directory structure..."
 mount -t vfat $ROMS_PARTITION $ROMS_MOUNT
 
-mkdir -p $ROMS_MOUNT/Roms
-mkdir -p $ROMS_MOUNT/Roms/GB
-mkdir -p $ROMS_MOUNT/Roms/GBC
-mkdir -p $ROMS_MOUNT/Roms/GBA
-mkdir -p $ROMS_MOUNT/CartDumps
-mkdir -p $ROMS_MOUNT/Cores
-mkdir -p $ROMS_MOUNT/Shaders
-mkdir -p $ROMS_MOUNT/BIOS
-mkdir -p $ROMS_MOUNT/Saves
+# RetroArch standard folder names for playlist/thumbnail compatibility
+mkdir -p "$ROMS_MOUNT/Nintendo - Game Boy"
+mkdir -p "$ROMS_MOUNT/Nintendo - Game Boy Color"
+mkdir -p "$ROMS_MOUNT/Nintendo - Game Boy Advance"
+mkdir -p "$ROMS_MOUNT/Cores"
+mkdir -p "$ROMS_MOUNT/Shaders"
+mkdir -p "$ROMS_MOUNT/BIOS"
+mkdir -p "$ROMS_MOUNT/Savestates"
+
+# Migrate ROMs from stock firmware NAND storage (one-time)
+migrate_roms() {
+    local src_dir="/userdata/rom"
+    if [ -d "$src_dir" ] && [ "$(ls -A $src_dir 2>/dev/null)" ]; then
+        log "Migrating ROMs from stock firmware ($src_dir)..."
+        for rom in "$src_dir"/*.gb; do
+            [ -f "$rom" ] && mv "$rom" "$ROMS_MOUNT/Nintendo - Game Boy Color/" 2>/dev/null && log "Migrated: $(basename $rom)"
+        done
+        for rom in "$src_dir"/*.gbc; do
+            [ -f "$rom" ] && mv "$rom" "$ROMS_MOUNT/Nintendo - Game Boy Color/" 2>/dev/null && log "Migrated: $(basename $rom)"
+        done
+        for rom in "$src_dir"/*.gba; do
+            [ -f "$rom" ] && mv "$rom" "$ROMS_MOUNT/Nintendo - Game Boy Advance/" 2>/dev/null && log "Migrated: $(basename $rom)"
+        done
+        # Migrate save files alongside ROMs
+        for sav in "$src_dir"/*.sav "$src_dir"/*.srm; do
+            [ -f "$sav" ] && mv "$sav" "$ROMS_MOUNT/Nintendo - Game Boy Color/" 2>/dev/null
+        done
+        log "Migration complete. Cleaning up NAND storage..."
+        rm -rf "$src_dir"/* 2>/dev/null
+        sync
+    fi
+}
+
+migrate_roms
 
 # Create README
-cat > $ROMS_MOUNT/README.txt << 'EOF'
+cat > "$ROMS_MOUNT/README.txt" << 'EOF'
 RetroSQ Enhanced CFW - ROM Storage
 ===================================
 
-Place your files in these folders:
+This SD card uses RetroArch standard folder names for full compatibility
+with playlists, thumbnails, and the Explore menu.
 
-  Roms/      - Game ROM files (manually added)
-    GB/      - Game Boy ROMs (.gb)
-    GBC/     - Game Boy Color ROMs (.gbc)
-    GBA/     - Game Boy Advance ROMs (.gba)
+Folder Structure:
+-----------------
+  Nintendo - Game Boy/         - GB ROMs (.gb) - also plays in GBC folder
+  Nintendo - Game Boy Color/   - GBC ROMs (.gbc) and GB ROMs
+  Nintendo - Game Boy Advance/ - GBA ROMs (.gba)
 
-  CartDumps/ - Auto-dumped cartridge ROMs
-             (Games inserted in the cart slot are dumped here)
+  Cores/      - Additional RetroArch cores (.so files)
+  Shaders/    - Custom shaders
+  BIOS/       - System BIOS files (gba_bios.bin, etc.)
+  Savestates/ - Save states (battery saves are stored with ROMs)
 
-  Cores/     - Additional RetroArch cores (.so files)
-  Shaders/   - Custom shaders
-  BIOS/      - System BIOS files (gba_bios.bin, etc.)
-  Saves/     - Backup save files
+Cartridge Dumps:
+----------------
+When you insert a cartridge, it is automatically dumped to the
+appropriate system folder based on file extension.
 
-This partition was automatically created on first boot.
-It uses all remaining space on your SD card.
+Playing Games:
+--------------
+  1. Insert cartridge OR boot without cartridge to enter menu
+  2. Press Start+Select to open RetroArch menu
+  3. Load Content -> Browse to system folder
+  4. Select your game
 
-To access ROMs in RetroArch:
-  1. Boot without a cartridge to enter menu
-  2. Load Content -> /mnt/roms/Roms/
-  3. Select your game
+Save Files:
+-----------
+Battery save files (.srm) are stored alongside ROMs in the same folder.
+This makes it easy to backup a game and its save together.
 
-Cores can be downloaded from:
-  https://buildbot.libretro.com/nightly/linux/armhf/latest/
+EverDrive/Multicart Support:
+----------------------------
+All ROMs from multicarts are dumped and sorted by system type.
+Save files (.sav) from the cart are also copied and renamed to .srm.
 
-For more information, visit:
+More Information:
+-----------------
   https://github.com/SiirRandall/sirrandall-hyperkin-gb
 
 EOF

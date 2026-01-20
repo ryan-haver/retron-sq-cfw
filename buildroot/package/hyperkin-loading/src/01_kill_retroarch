@@ -1,2 +1,7 @@
 source /etc/check_dumper.sh
 $(KillGame)
+# Relaunch menu after cart removal (only if boot is complete)
+if [ -f /tmp/boot_complete ]; then
+    sleep 1
+    $(RunGame)
+fi

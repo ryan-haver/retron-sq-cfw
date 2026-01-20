@@ -26,33 +26,75 @@
 
 #define PIC_LOADING "/etc/Splash_Screen_MockUp.jpg"
 #define DUMPER_PATH "/media/usb0"
-#define SDCARD_ROM_PATH "/mnt/roms/CartDumps"
+#define SDCARD_ROMS_BASE "/mnt/roms"
 #define USERDATA_ROM_PATH_FALLBACK "/userdata/rom"
 #define USERDATA_PATH "/userdata"
 
-// Cached ROM path - set once at startup
-static const char* g_rom_path = NULL;
+// RetroArch standard system folder names
+#define FOLDER_GB  "Nintendo - Game Boy"
+#define FOLDER_GBC "Nintendo - Game Boy Color"
+#define FOLDER_GBA "Nintendo - Game Boy Advance"
 
-// Function to initialize and get the active ROM path (SD card if available, else fallback)
-static const char* GetRomPath(void) {
-    if (g_rom_path != NULL) {
-        return g_rom_path;  // Return cached path
-    }
+// Storage mode
+static int g_use_sdcard = 0;
+static char g_rom_base_path[256] = {0};
+
+// Initialize ROM storage path (SD card if available, else NAND fallback)
+static void InitRomStorage(void) {
     struct stat st;
-    if (stat(SDCARD_ROM_PATH, &st) == 0 && S_ISDIR(st.st_mode)) {
-        g_rom_path = SDCARD_ROM_PATH;
-        printf("Using SD card for ROM storage: %s\n", g_rom_path);
+    if (stat(SDCARD_ROMS_BASE, &st) == 0 && S_ISDIR(st.st_mode)) {
+        g_use_sdcard = 1;
+        strncpy(g_rom_base_path, SDCARD_ROMS_BASE, sizeof(g_rom_base_path) - 1);
+        printf("Using SD card for ROM storage: %s\n", g_rom_base_path);
     } else {
-        // Fallback to internal storage
+        g_use_sdcard = 0;
+        strncpy(g_rom_base_path, USERDATA_ROM_PATH_FALLBACK, sizeof(g_rom_base_path) - 1);
         mkdir(USERDATA_ROM_PATH_FALLBACK, 0755);
-        g_rom_path = USERDATA_ROM_PATH_FALLBACK;
-        printf("Using internal storage for ROM storage: %s\n", g_rom_path);
+        printf("WARNING: SD card not found, using internal NAND: %s\n", g_rom_base_path);
     }
-    return g_rom_path;
 }
 
-// Macro for backward compatibility - uses runtime path
-#define USERDATA_ROM_PATH GetRomPath()
+// Get system folder name based on file extension
+static const char* GetSystemFolder(const char* filename) {
+    size_t len = strlen(filename);
+    if (len >= 4 && strcasecmp(filename + len - 4, ".gba") == 0) {
+        return FOLDER_GBA;
+    } else if (len >= 4 && strcasecmp(filename + len - 4, ".gbc") == 0) {
+        return FOLDER_GBC;
+    } else if (len >= 3 && strcasecmp(filename + len - 3, ".gb") == 0) {
+        return FOLDER_GBC;  // .gb files go to GBC folder (plays both)
+    } else if (len >= 4 && strcasecmp(filename + len - 4, ".sav") == 0) {
+        // For .sav files, check the base ROM name
+        char basename[256];
+        strncpy(basename, filename, sizeof(basename) - 1);
+        char* dot = strrchr(basename, '.');
+        if (dot) *dot = '\0';
+        // Try to find matching ROM
+        char testpath[512];
+        snprintf(testpath, sizeof(testpath), "%s/%s/%s.gba", g_rom_base_path, FOLDER_GBA, basename);
+        if (access(testpath, F_OK) == 0) return FOLDER_GBA;
+        snprintf(testpath, sizeof(testpath), "%s/%s/%s.gbc", g_rom_base_path, FOLDER_GBC, basename);
+        if (access(testpath, F_OK) == 0) return FOLDER_GBC;
+        snprintf(testpath, sizeof(testpath), "%s/%s/%s.gb", g_rom_base_path, FOLDER_GBC, basename);
+        if (access(testpath, F_OK) == 0) return FOLDER_GBC;
+        return FOLDER_GBC;  // Default for unknown saves
+    }
+    return FOLDER_GBC;  // Default fallback
+}
+
+// Build full path to ROM destination
+static void GetRomDestPath(const char* filename, char* dest, size_t dest_size) {
+    if (g_use_sdcard) {
+        const char* sysfolder = GetSystemFolder(filename);
+        snprintf(dest, dest_size, "%s/%s", g_rom_base_path, sysfolder);
+        mkdir(dest, 0755);  // Ensure folder exists
+    } else {
+        strncpy(dest, g_rom_base_path, dest_size - 1);
+    }
+}
+
+// Legacy macro for backward compatibility in sorting functions
+#define USERDATA_ROM_PATH g_rom_base_path
 
 long int g_dumper_total_size = 0;
 long int g_avail_size = 0;
@@ -125,38 +167,111 @@ static inline int sortbysize(const struct dirent **a, const struct dirent **b){
 	return sbuf1.st_size > sbuf2.st_size; //sort from largest size to smallest
 }
 
-void CleanUserdata(void){
-	DIR* pdir;
-	struct dirent **pdirent;
-	int n = 0, ret = 0;
-	struct stat sbuf;
-	char path[1024];
-	long int avail_size = g_avail_size;
-	pdir = opendir(USERDATA_ROM_PATH);
-	if(pdir){
-		n = scandir(USERDATA_ROM_PATH, &pdirent, NULL, sortbysize);
-		printf("n=%d\n", n);
-		while(n--){
-			if(!strcmp(pdirent[n]->d_name, ".") || !strcmp(pdirent[n]->d_name, ".."))
-				goto free_and_continue;
-			if(strstr(pdirent[n]->d_name + strlen(pdirent[n]->d_name) - strlen(".srm"), ".srm"))
-				goto free_and_continue;
-			if(strstr(pdirent[n]->d_name + strlen(pdirent[n]->d_name) - strlen(".stat"), ".stat"))
-				goto free_and_continue;
-			sprintf(path, "%s/%s", USERDATA_ROM_PATH, pdirent[n]->d_name);
-			stat(path, &sbuf);
-			printf("%s[%ld]\n", pdirent[n]->d_name, sbuf.st_size);
-			if(avail_size < g_dumper_total_size){
-				printf("delete [%s]\n", path);
-				ret = remove(path);
-				sync();
-				avail_size += sbuf.st_size;
-			}
-free_and_continue:
-			free(pdirent[n]);
-		}
-		free(pdirent);
-	}
+// Check if a ROM has an associated save file
+static int HasSaveFile(const char* folder, const char* rom_name) {
+    char save_path[1024];
+    char basename[256];
+    strncpy(basename, rom_name, sizeof(basename) - 1);
+    char* dot = strrchr(basename, '.');
+    if (dot) *dot = '\0';
+    
+    // Check for .srm (RetroArch save)
+    snprintf(save_path, sizeof(save_path), "%s/%s.srm", folder, basename);
+    if (access(save_path, F_OK) == 0) return 1;
+    
+    // Check for .sav (cart save)
+    snprintf(save_path, sizeof(save_path), "%s/%s.sav", folder, basename);
+    if (access(save_path, F_OK) == 0) return 1;
+    
+    return 0;
+}
+
+// Clean ROMs from a specific folder, preferring those without saves
+static long int CleanFolder(const char* folder, long int space_needed, long int current_avail) {
+    DIR* pdir;
+    struct dirent **pdirent;
+    int n = 0;
+    struct stat sbuf;
+    char path[1024];
+    long int avail_size = current_avail;
+    
+    pdir = opendir(folder);
+    if (!pdir) return avail_size;
+    
+    n = scandir(folder, &pdirent, NULL, sortbysize);
+    if (n < 0) { closedir(pdir); return avail_size; }
+    
+    printf("CleanFolder: %s (%d files)\n", folder, n);
+    
+    // First pass: delete ROMs WITHOUT saves (oldest/largest first)
+    for (int i = n - 1; i >= 0 && avail_size < space_needed; i--) {
+        if (!strcmp(pdirent[i]->d_name, ".") || !strcmp(pdirent[i]->d_name, ".."))
+            continue;
+        // Skip save files and state files
+        size_t len = strlen(pdirent[i]->d_name);
+        if (len >= 4 && (strcasecmp(pdirent[i]->d_name + len - 4, ".srm") == 0 ||
+                         strcasecmp(pdirent[i]->d_name + len - 4, ".sav") == 0))
+            continue;
+        if (len >= 5 && strcasecmp(pdirent[i]->d_name + len - 5, ".stat") == 0)
+            continue;
+        
+        // Only delete if no save file
+        if (!HasSaveFile(folder, pdirent[i]->d_name)) {
+            snprintf(path, sizeof(path), "%s/%s", folder, pdirent[i]->d_name);
+            if (stat(path, &sbuf) == 0) {
+                printf("Deleting (no save): %s [%ld bytes]\n", path, sbuf.st_size);
+                if (remove(path) == 0) {
+                    sync();
+                    avail_size += sbuf.st_size;
+                }
+            }
+        }
+    }
+    
+    // Second pass: if still need space, delete ROMs WITH saves (warn user)
+    for (int i = n - 1; i >= 0 && avail_size < space_needed; i--) {
+        if (!strcmp(pdirent[i]->d_name, ".") || !strcmp(pdirent[i]->d_name, ".."))
+            continue;
+        size_t len = strlen(pdirent[i]->d_name);
+        if (len >= 4 && (strcasecmp(pdirent[i]->d_name + len - 4, ".srm") == 0 ||
+                         strcasecmp(pdirent[i]->d_name + len - 4, ".sav") == 0))
+            continue;
+        if (len >= 5 && strcasecmp(pdirent[i]->d_name + len - 5, ".stat") == 0)
+            continue;
+        
+        snprintf(path, sizeof(path), "%s/%s", folder, pdirent[i]->d_name);
+        if (stat(path, &sbuf) == 0) {
+            printf("WARNING: Deleting ROM with save: %s [%ld bytes]\n", path, sbuf.st_size);
+            if (remove(path) == 0) {
+                sync();
+                avail_size += sbuf.st_size;
+            }
+        }
+    }
+    
+    // Cleanup
+    for (int i = 0; i < n; i++) free(pdirent[i]);
+    free(pdirent);
+    closedir(pdir);
+    
+    return avail_size;
+}
+
+void CleanUserdata(void) {
+    long int avail_size = g_avail_size;
+    char folder_path[512];
+    
+    if (g_use_sdcard) {
+        // Clean each system folder on SD card
+        const char* folders[] = { FOLDER_GB, FOLDER_GBC, FOLDER_GBA };
+        for (int f = 0; f < 3 && avail_size < g_dumper_total_size; f++) {
+            snprintf(folder_path, sizeof(folder_path), "%s/%s", g_rom_base_path, folders[f]);
+            avail_size = CleanFolder(folder_path, g_dumper_total_size, avail_size);
+        }
+    } else {
+        // Clean NAND fallback folder
+        avail_size = CleanFolder(g_rom_base_path, g_dumper_total_size, avail_size);
+    }
 }
 
 #include <sys/statvfs.h>
@@ -175,27 +290,29 @@ long GetAvailableSpace(const char* path){
 long int CheckFiles(const char* dumper_folder){
 	char *ptr_gb = NULL, *ptr_gba = NULL, *ptr_gbc = NULL, *ptr_sav = NULL, *ptr_crc = NULL;
 	struct dirent *dir = NULL;
-	int ret1 = 0;
 	DIR* di = opendir(dumper_folder);
 	long int total_size = 0;
 	struct stat st;
 	if(di){
 		while((dir = readdir(di)) != NULL){
-			ptr_gb = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gb"), ".gb");
-			ptr_gba = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gba"), ".gba");
-			ptr_gbc = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gbc"), ".gbc");
-			ptr_sav = strstr(dir->d_name + strlen(dir->d_name) - strlen(".sav"), ".sav");
-			ptr_crc = strstr(dir->d_name + strlen(dir->d_name) - strlen(".crc"), ".crc");
+			size_t len = strlen(dir->d_name);
+			ptr_gb = (len >= 3 && strcasecmp(dir->d_name + len - 3, ".gb") == 0) ? dir->d_name : NULL;
+			ptr_gba = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".gba") == 0) ? dir->d_name : NULL;
+			ptr_gbc = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".gbc") == 0) ? dir->d_name : NULL;
+			ptr_sav = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".sav") == 0) ? dir->d_name : NULL;
+			ptr_crc = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".crc") == 0) ? dir->d_name : NULL;
 			if((ptr_gb || ptr_gba || ptr_gbc || ptr_sav || ptr_crc)){
 				char full_name[1024];
-				sprintf(full_name, "%s/%s", dumper_folder, dir->d_name);
-				stat(full_name, &st);
-				total_size += st.st_size;
-				printf("found name[%s], size[%ld], total[%ld]\n", dir->d_name, st.st_size, total_size);
-                        }
-                }
-        }
-        return total_size;
+				snprintf(full_name, sizeof(full_name), "%s/%s", dumper_folder, dir->d_name);
+				if (stat(full_name, &st) == 0) {
+					total_size += st.st_size;
+					printf("found name[%s], size[%ld], total[%ld]\n", dir->d_name, st.st_size, total_size);
+				}
+			}
+		}
+		closedir(di);
+	}
+	return total_size;
 }
 
 static int CopyFile(const char* src_path, const char* src_name, const char* dst_path, const char* dst_name){
@@ -288,39 +405,48 @@ static int SavRenameSrm(const char* old_path, const char *old_name){
 }
 
 static int CopyThread(void* ptr){
-	char *ptr_gb = NULL, *ptr_gba = NULL, *ptr_gbc = NULL, *ptr_sav = NULL, *ptr_crc = NULL;
 	struct dirent *dir = NULL;
-	int ret1 = 0;
 	DIR* di = opendir(DUMPER_PATH);
-	struct stat st;
 	copied_total_size = 0;
 	copy_thread_exit = 0;
+	char dest_folder[512];
 
 	printf("CopyThread Start\n");
 	if(di){
 		while((dir = readdir(di)) != NULL){//process gb/gba/gbc/sav
-			ptr_gb = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gb"), ".gb");
-			ptr_gba = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gba"), ".gba");
-			ptr_gbc = strstr(dir->d_name + strlen(dir->d_name) - strlen(".gbc"), ".gbc");
-			ptr_sav = strstr(dir->d_name + strlen(dir->d_name) - strlen(".sav"), ".sav");
-			if(ptr_gb || ptr_gba || ptr_gbc){
-				CopyFile(DUMPER_PATH, dir->d_name, USERDATA_ROM_PATH, dir->d_name);
+			size_t len = strlen(dir->d_name);
+			int is_gb = (len >= 3 && strcasecmp(dir->d_name + len - 3, ".gb") == 0);
+			int is_gba = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".gba") == 0);
+			int is_gbc = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".gbc") == 0);
+			int is_sav = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".sav") == 0);
+			
+			if(is_gb || is_gba || is_gbc){
+				GetRomDestPath(dir->d_name, dest_folder, sizeof(dest_folder));
+				CopyFile(DUMPER_PATH, dir->d_name, dest_folder, dir->d_name);
 			}
-			if(ptr_sav && CheckSrm(USERDATA_ROM_PATH, dir->d_name) == 0){
-				if(CopyFile(DUMPER_PATH, dir->d_name, USERDATA_ROM_PATH, dir->d_name) == 0)
-					SavRenameSrm(USERDATA_ROM_PATH, dir->d_name);
+			if(is_sav){
+				GetRomDestPath(dir->d_name, dest_folder, sizeof(dest_folder));
+				if(CheckSrm(dest_folder, dir->d_name) == 0){
+					if(CopyFile(DUMPER_PATH, dir->d_name, dest_folder, dir->d_name) == 0)
+						SavRenameSrm(dest_folder, dir->d_name);
+				}
 			}
-                }
-        }
+		}
+		closedir(di);
+	}
+	// Second pass for .crc files
 	di = opendir(DUMPER_PATH);
-	if(di){//Only process .crc file
-		while((dir = readdir(di)) != NULL){//process crc
-			ptr_crc = strstr(dir->d_name + strlen(dir->d_name) - strlen(".crc"), ".crc");
-			if(ptr_crc){
-				CopyFile(DUMPER_PATH, dir->d_name, USERDATA_ROM_PATH, dir->d_name);
-                        }
-                }
-        }
+	if(di){
+		while((dir = readdir(di)) != NULL){
+			size_t len = strlen(dir->d_name);
+			int is_crc = (len >= 4 && strcasecmp(dir->d_name + len - 4, ".crc") == 0);
+			if(is_crc){
+				GetRomDestPath(dir->d_name, dest_folder, sizeof(dest_folder));
+				CopyFile(DUMPER_PATH, dir->d_name, dest_folder, dir->d_name);
+			}
+		}
+		closedir(di);
+	}
 	printf("CopyThread Exit\n");
 	copy_thread_exit = 1;
 	return 1;
@@ -332,13 +458,19 @@ int main( int argc, char** argv ){
 
 	putenv("SDL_MONITOR_INDEX=1");
 	printf("SDL_MONITOR_INDEX=1\n");
+	
+	// Initialize ROM storage path (SD card or NAND fallback)
+	InitRomStorage();
+	
 	g_dumper_total_size = CheckFiles(DUMPER_PATH);
 	printf("Check Dumper Files : Total ROM and SAV Size=[%ld]\n", g_dumper_total_size);
-	g_avail_size = GetAvailableSpace(USERDATA_PATH);
+	
+	// Check available space on the target storage
+	g_avail_size = GetAvailableSpace(g_rom_base_path);
 
 	if(g_avail_size > 0 && g_avail_size < g_dumper_total_size){
 		CleanUserdata();
-		GetAvailableSpace(USERDATA_PATH);
+		GetAvailableSpace(g_rom_base_path);
 	}
 
 	SDL_Init( 0 );
@@ -385,7 +517,7 @@ int main( int argc, char** argv ){
 
 	copy_mutex = SDL_CreateMutex();
 	copy_thread = SDL_CreateThread(CopyThread, "CopyThread", (void*)NULL);
-	if(copy_thread = NULL){
+	if(copy_thread == NULL){
 		printf("CopyThread Failed: %s\n", SDL_GetError());
 	}
 
