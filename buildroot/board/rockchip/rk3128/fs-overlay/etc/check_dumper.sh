@@ -47,12 +47,8 @@ function ResetROM(){
 	result=$(CheckROM)
 	if [[ "x$result" == "x" ]]; then
 		echo "No cartridge in USB, launching menu" > /dev/console
-		if [[ "x${PREROM}" != "x" ]]; then
-			echo "remove ${PREROM}" > /dev/console
-			/bin/rm -rf ${PREROM}
-			/bin/sync
-			echo 3 > /proc/sys/vm/drop_caches
-		fi
+		# CFW: Keep dumped ROMs for cartless play - don't delete PREROM
+		# User can browse to /mnt/roms/CartDumps/ to play previously dumped games
 		# Launch RetroArch menu when no cart after reset
 		HOME=$HOME $RETROARCH_BIN -v -c $RETROARCH_CON --menu > /dev/console 2>&1 &
 	else
