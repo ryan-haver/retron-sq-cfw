@@ -1,5 +1,14 @@
 DUMPER_PATH="/media/usb0/"
-ROM_PATH="/userdata/rom/"
+
+# Use SD card for ROM dumps if available, fallback to internal NAND
+if [ -d "/mnt/roms/CartDumps" ]; then
+    ROM_PATH="/mnt/roms/CartDumps/"
+else
+    # Fallback to internal storage if SD card not mounted
+    ROM_PATH="/userdata/rom/"
+    mkdir -p "$ROM_PATH" 2>/dev/null
+fi
+
 RETROARCH_BIN="/usr/bin/retroarch"
 RETROARCH_CON="/userdata/retroarch/retroarch.cfg"
 GBA_PLUGIN="/usr/lib/libretro/gpsp_libretro.so"
@@ -37,13 +46,15 @@ function ResetROM(){
 	fi
 	result=$(CheckROM)
 	if [[ "x$result" == "x" ]]; then
-		echo "without any rom file in usb" > /dev/console
+		echo "No cartridge in USB, launching menu" > /dev/console
 		if [[ "x${PREROM}" != "x" ]]; then
 			echo "remove ${PREROM}" > /dev/console
 			/bin/rm -rf ${PREROM}
 			/bin/sync
 			echo 3 > /proc/sys/vm/drop_caches
 		fi
+		# Launch RetroArch menu when no cart after reset
+		HOME=$HOME $RETROARCH_BIN -v -c $RETROARCH_CON --menu > /dev/console 2>&1 &
 	else
 		if  pidof "hyperkin-loading" > /dev/null; then
 			echo "Now executing the hyperkin-loading" > /dev/console
@@ -89,7 +100,8 @@ else
 	echo "retroarch not running" > /dev/console
 	result=$(CheckROM)
 	if [[ "x$result" == "x" ]]; then
-		echo "without any rom file" > /dev/console
+		echo "No cartridge detected, launching RetroArch menu" > /dev/console
+		HOME=$HOME $RETROARCH_BIN -v -c $RETROARCH_CON --menu > /dev/console 2>&1 &
 	elif [ ! -f ${ROM_PATH}${result} ]; then
 		#file not found, start copy files
 		echo "loading:${ROM_PATH}${result}" > /dev/console

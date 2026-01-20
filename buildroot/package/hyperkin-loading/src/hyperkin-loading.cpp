@@ -26,8 +26,34 @@
 
 #define PIC_LOADING "/etc/Splash_Screen_MockUp.jpg"
 #define DUMPER_PATH "/media/usb0"
-#define USERDATA_ROM_PATH "/userdata/rom"
+#define SDCARD_ROM_PATH "/mnt/roms/CartDumps"
+#define USERDATA_ROM_PATH_FALLBACK "/userdata/rom"
 #define USERDATA_PATH "/userdata"
+
+// Cached ROM path - set once at startup
+static const char* g_rom_path = NULL;
+
+// Function to initialize and get the active ROM path (SD card if available, else fallback)
+static const char* GetRomPath(void) {
+    if (g_rom_path != NULL) {
+        return g_rom_path;  // Return cached path
+    }
+    struct stat st;
+    if (stat(SDCARD_ROM_PATH, &st) == 0 && S_ISDIR(st.st_mode)) {
+        g_rom_path = SDCARD_ROM_PATH;
+        printf("Using SD card for ROM storage: %s\n", g_rom_path);
+    } else {
+        // Fallback to internal storage
+        mkdir(USERDATA_ROM_PATH_FALLBACK, 0755);
+        g_rom_path = USERDATA_ROM_PATH_FALLBACK;
+        printf("Using internal storage for ROM storage: %s\n", g_rom_path);
+    }
+    return g_rom_path;
+}
+
+// Macro for backward compatibility - uses runtime path
+#define USERDATA_ROM_PATH GetRomPath()
+
 long int g_dumper_total_size = 0;
 long int g_avail_size = 0;
 long int copied_total_size = 0;

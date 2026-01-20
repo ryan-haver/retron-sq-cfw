@@ -135,6 +135,7 @@ mkdir -p $ROMS_MOUNT/Roms
 mkdir -p $ROMS_MOUNT/Roms/GB
 mkdir -p $ROMS_MOUNT/Roms/GBC
 mkdir -p $ROMS_MOUNT/Roms/GBA
+mkdir -p $ROMS_MOUNT/CartDumps
 mkdir -p $ROMS_MOUNT/Cores
 mkdir -p $ROMS_MOUNT/Shaders
 mkdir -p $ROMS_MOUNT/BIOS
@@ -147,10 +148,13 @@ RetroSQ Enhanced CFW - ROM Storage
 
 Place your files in these folders:
 
-  Roms/      - Game ROM files
+  Roms/      - Game ROM files (manually added)
     GB/      - Game Boy ROMs (.gb)
     GBC/     - Game Boy Color ROMs (.gbc)
     GBA/     - Game Boy Advance ROMs (.gba)
+
+  CartDumps/ - Auto-dumped cartridge ROMs
+             (Games inserted in the cart slot are dumped here)
 
   Cores/     - Additional RetroArch cores (.so files)
   Shaders/   - Custom shaders
