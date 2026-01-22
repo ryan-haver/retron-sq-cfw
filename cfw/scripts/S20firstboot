@@ -1,0 +1,33 @@
+#!/bin/sh
+#
+# S20firstboot - First boot partition setup for Retron SQ Enhanced CFW
+#
+# This script runs before S21mountall to create the FAT32 ROMs partition
+# on first boot. It only runs once and marks completion with a flag file.
+#
+
+case "$1" in
+  start)
+    echo "Checking first boot setup..."
+    
+    # Only run on first boot (check persistent marker in userdata)
+    # Also check legacy /var location for backwards compatibility
+    if [ ! -f /userdata/.first_boot_complete ] && [ ! -f /var/.first_boot_complete ]; then
+        # Check if the script exists
+        if [ -x /usr/local/bin/first-boot-setup.sh ]; then
+            echo "Running first boot setup..."
+            /usr/local/bin/first-boot-setup.sh
+        else
+            echo "First boot script not found, skipping"
+        fi
+    fi
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+esac
+
+exit 0

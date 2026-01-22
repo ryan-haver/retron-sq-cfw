@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# S22mountroms - Mount the ROMs partition for Retron SQ Enhanced CFW
+#
+# This script runs after S21mountall to mount the FAT32 ROMs partition
+# at /mnt/roms. This partition is created by S20firstboot on first boot.
+#
+
+ROMS_MOUNT="/mnt/roms"
+SDCARD="/dev/mmcblk0"
+
+find_roms_partition() {
+    # Look for a FAT32 partition labeled ROMS (primary detection method)
+    # Using label is more robust than assuming partition number
+    for part in "${SDCARD}"p*; do
+        if [ -b "$part" ]; then
+            LABEL=$(blkid -s LABEL -o value "$part" 2>/dev/null)
+            if [ "$LABEL" = "ROMS" ]; then
+                echo "$part"
+                return
+            fi
+        fi
+    done
+}
+
+case "$1" in
+  start)
+    echo "Mounting ROMs partition..."
+    
+    ROMS_PARTITION=$(find_roms_partition)
+    
+    if [ -n "$ROMS_PARTITION" ] && [ -b "$ROMS_PARTITION" ]; then
+        mkdir -p "$ROMS_MOUNT"
+        
+        # Run filesystem check before mounting (auto-fix minor errors)
+        # This helps prevent corruption issues common with SD cards
+        # Try fsck.fat first (dosfstools standard), then fallbacks
+        if command -v fsck.fat >/dev/null 2>&1; then
+            echo "Checking FAT filesystem..."
+            fsck.fat -a "$ROMS_PARTITION" 2>/dev/null || true
+        elif command -v fsck.vfat >/dev/null 2>&1; then
+            echo "Checking FAT filesystem..."
+            fsck.vfat -a "$ROMS_PARTITION" 2>/dev/null || true
+        elif command -v dosfsck >/dev/null 2>&1; then
+            echo "Checking FAT filesystem..."
+            dosfsck -a "$ROMS_PARTITION" 2>/dev/null || true
+        fi
+        
+        # Mount with options optimized for SD card
+        if mount -t vfat -o rw,noatime,fmask=0022,dmask=0022,utf8,flush "$ROMS_PARTITION" "$ROMS_MOUNT"; then
+            echo "ROMs partition mounted at $ROMS_MOUNT"
+            
+            # Create symlink in userdata for easy access
+            if [ ! -L /userdata/roms ]; then
+                ln -sf "$ROMS_MOUNT" /userdata/roms 2>/dev/null || true
+            fi
+        else
+            echo "Failed to mount ROMs partition"
+        fi
+    else
+        echo "No ROMs partition found (this is normal on stock firmware)"
+    fi
+    ;;
+  stop)
+    echo "Unmounting ROMs partition..."
+    
+    # Sync before unmount
+    sync
+    
+    if mountpoint -q "$ROMS_MOUNT"; then
+        umount "$ROMS_MOUNT"
+        echo "ROMs partition unmounted"
+    fi
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+    exit 1
+    ;;
+esac
+
+exit 0
