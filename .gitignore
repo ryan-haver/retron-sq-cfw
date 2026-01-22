@@ -12,3 +12,11 @@
 /IMAGE/
 /rockdev/
 .*.swp
+
+# Release images (use GitHub Releases instead)
+releases/**/*.img
+*.img
+
+# Keep small system images in device/
+!device/rockchip/rockimg/*.img
+!device/rockchip/rk2818/rockimg/*.img
